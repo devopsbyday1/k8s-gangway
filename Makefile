@@ -14,53 +14,31 @@
 
 PROJECT := gangway
 # Where to push the docker image.
-REGISTRY ?= gcr.io/heptio-images
-IMAGE := $(REGISTRY)/$(PROJECT)
+REGISTRY ?= ghcr.io/devopsbyday1
+IMAGE := $(REGISTRY)/k8s-gangway
 SRCDIRS := ./cmd/gangway
 PKGS := $(shell go list ./cmd/... ./internal/...)
 
-VERSION ?= master
+VERSION ?= latest
 
 all: build
 
-build: deps bindata
+build:
 	go build ./...
 
 install:
 	go install -v ./cmd/gangway/...
 
-setup:
-	go get -u github.com/mjibson/esc/...
-
-check: test vet gofmt staticcheck misspell
-
 deps:
-	GO111MODULE=on go mod tidy && GO111MODULE=on go mod vendor && GO111MODULE=on go mod verify
+	go mod tidy && go mod verify
 
-vet: | test
+check: test vet
+
+vet:
 	go vet ./...
-
-bindata:
-	esc -o cmd/gangway/bindata.go templates/
 
 test:
 	go test -v ./...
-
-staticcheck:
-	@go get honnef.co/go/tools/cmd/staticcheck
-	staticcheck $(PKGS)
-
-misspell:
-	@go get github.com/client9/misspell/cmd/misspell
-	misspell \
-		-i clas \
-		-locale US \
-		-error \
-		cmd/* docs/* *.md
-
-gofmt:
-	@echo Checking code is gofmted
-	@test -z "$(shell gofmt -s -l -d -e $(SRCDIRS) | tee /dev/stderr)"
 
 image:
 	docker build . -t $(IMAGE):$(VERSION)
@@ -68,4 +46,4 @@ image:
 push:
 	docker push $(IMAGE):$(VERSION)
 
-.PHONY: all deps bindata test image setup
+.PHONY: all deps test image build install check vet

@@ -1,0 +1,85 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/devopsbyday1/k8s-gangway
+  tag: latest
+  pullPolicy: IfNotPresent
+
+config:
+  clusterName: ""
+  # OIDC provider issuer URL (used for token verification via OIDC discovery)
+  issuerURL: ""
+  # OIDC authorization and token endpoints (required if not using issuerURL discovery)
+  authorizeURL: ""
+  tokenURL: ""
+  clientID: ""
+  clientSecret: ""
+  redirectURL: ""
+  apiServerURL: ""
+  # Session encryption key — set via secret in production
+  sessionSecurityKey: ""
+  scopes:
+    - openid
+    - profile
+    - email
+    - offline_access
+  usernameClaim: "nickname"
+
+# Reference an existing secret for sensitive values.
+# If set, the following keys are read from the secret:
+#   clientSecret, sessionSecurityKey
+existingSecret: ""
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    # kubernetes.io/tls-acme: "true"
+  host: ""
+  tls: []
+  # - secretName: gangway-tls
+  #   hosts:
+  #     - gangway.example.com
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 512Mi
+
+# TLS for gangway itself (not the ingress)
+tls:
+  enabled: false
+  certFile: /etc/gangway/tls/tls.crt
+  keyFile: /etc/gangway/tls/tls.key
+
+# Path to cluster CA certificate (defaults to in-cluster service account CA)
+clusterCAPath: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+
+# Mount an existing ConfigMap or Secret for the cluster CA
+clusterCA:
+  existingSecret: ""
+  secretKey: "ca.crt"
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  runAsGroup: 65534
+
+securityContext: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

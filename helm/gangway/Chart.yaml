@@ -1,0 +1,13 @@
+apiVersion: v2
+name: gangway
+description: OIDC authentication web app for Kubernetes cluster access
+type: application
+version: 1.0.0
+appVersion: "latest"
+keywords:
+  - oidc
+  - kubernetes
+  - authentication
+home: https://github.com/devopsbyday1/k8s-gangway
+sources:
+  - https://github.com/devopsbyday1/k8s-gangway

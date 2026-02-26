@@ -18,26 +18,27 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
 
-	"github.com/ghodss/yaml"
-
+	"github.com/devopsbyday1/k8s-gangway/internal/config"
+	"github.com/devopsbyday1/k8s-gangway/internal/oidc"
+	"github.com/devopsbyday1/k8s-gangway/internal/session"
 	"github.com/gorilla/sessions"
-	"github.com/heptiolabs/gangway/internal/config"
-	"github.com/heptiolabs/gangway/internal/session"
 	"golang.org/x/oauth2"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api/v1"
+	"sigs.k8s.io/yaml"
 )
 
 func testInit() {
 	gangwayUserSession = session.New("test")
 	transportConfig = config.NewTransportConfig("")
+	idTokenVerifier = &oidc.UnsafeVerifier{}
 
 	oauth2Cfg = &oauth2.Config{
 		ClientID:     "cfg.ClientID",
@@ -247,7 +248,7 @@ func TestCommandLineHandler(t *testing.T) {
 			}
 			// if response code is OK then check that username is correct in resultant template
 			if rsp.Code == 200 {
-				bodyBytes, _ := ioutil.ReadAll(rsp.Body)
+				bodyBytes, _ := io.ReadAll(rsp.Body)
 				bodyString := string(bodyBytes)
 				re := regexp.MustCompile("--user=(.+)")
 				found := re.FindString(bodyString)
@@ -261,12 +262,12 @@ func TestCommandLineHandler(t *testing.T) {
 
 func TestKubeconfigHandler(t *testing.T) {
 	tests := map[string]struct {
-		cfg                                config.Config
-		params                             map[string]string
-		usernameClaim                      string
-		expectedStatusCode                 int
-		expectedAuthInfoName               string
-		expectedAuthInfoAuthProviderConfig map[string]string
+		cfg                  config.Config
+		params               map[string]string
+		usernameClaim        string
+		expectedStatusCode   int
+		expectedAuthInfoName string
+		expectedToken        string
 	}{
 		"default": {
 			cfg: config.Config{
@@ -283,13 +284,7 @@ func TestKubeconfigHandler(t *testing.T) {
 			expectedStatusCode:   http.StatusOK,
 			usernameClaim:        "sub",
 			expectedAuthInfoName: "gangway@heptio.com@cluster1",
-			expectedAuthInfoAuthProviderConfig: map[string]string{
-				"client-id":      "someClientID",
-				"client-secret":  "someClientSecret",
-				"id-token":       "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJHYW5nd2F5VGVzdCIsImlhdCI6MTU0MDA0NjM0NywiZXhwIjoxODg3MjAxNTQ3LCJhdWQiOiJnYW5nd2F5LmhlcHRpby5jb20iLCJzdWIiOiJnYW5nd2F5QGhlcHRpby5jb20iLCJHaXZlbk5hbWUiOiJHYW5nIiwiU3VybmFtZSI6IldheSIsIkVtYWlsIjoiZ2FuZ3dheUBoZXB0aW8uY29tIiwiR3JvdXBzIjoiZGV2LGFkbWluIn0.zNG4Dnxr76J0p4phfsAUYWunioct0krkMiunMynlQsU",
-				"refresh-token":  "bar",
-				"idp-issuer-url": "GangwayTest",
-			},
+			expectedToken:        "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJHYW5nd2F5VGVzdCIsImlhdCI6MTU0MDA0NjM0NywiZXhwIjoxODg3MjAxNTQ3LCJhdWQiOiJnYW5nd2F5LmhlcHRpby5jb20iLCJzdWIiOiJnYW5nd2F5QGhlcHRpby5jb20iLCJHaXZlbk5hbWUiOiJHYW5nIiwiU3VybmFtZSI6IldheSIsIkVtYWlsIjoiZ2FuZ3dheUBoZXB0aW8uY29tIiwiR3JvdXBzIjoiZGV2LGFkbWluIn0.zNG4Dnxr76J0p4phfsAUYWunioct0krkMiunMynlQsU",
 		},
 	}
 
@@ -304,7 +299,7 @@ func TestKubeconfigHandler(t *testing.T) {
 
 			// Create dummy cluster CA file
 			clusterCAData := "dummy cluster CA"
-			f, err := ioutil.TempFile("", "gangway-kubeconfig-handler-test")
+			f, err := os.CreateTemp("", "gangway-kubeconfig-handler-test")
 			if err != nil {
 				t.Fatalf("Error creating temp file: %v", err)
 			}
@@ -363,7 +358,7 @@ func TestKubeconfigHandler(t *testing.T) {
 			}
 			// if response code is OK, validate the kubeconfig
 			if rsp.Code == 200 {
-				bodyBytes, err := ioutil.ReadAll(rsp.Body)
+				bodyBytes, err := io.ReadAll(rsp.Body)
 				if err != nil {
 					t.Fatalf("error reading body: %v", err)
 				}
@@ -396,11 +391,12 @@ func TestKubeconfigHandler(t *testing.T) {
 					t.Errorf("Expected AuthInfo.Name %q, but got %q", tc.expectedAuthInfoName, authInfo.Name)
 				}
 
-				if authInfo.AuthInfo.AuthProvider.Name != "oidc" {
-					t.Errorf("expecetd authprovider to be oidc, got %s", authInfo.AuthInfo.AuthProvider.Name)
+				// Verify static token format (auth-provider: oidc was removed in kubectl 1.30)
+				if authInfo.AuthInfo.Token != tc.expectedToken {
+					t.Errorf("Expected token %q, but got %q", tc.expectedToken, authInfo.AuthInfo.Token)
 				}
-				if !reflect.DeepEqual(authInfo.AuthInfo.AuthProvider.Config, tc.expectedAuthInfoAuthProviderConfig) {
-					t.Errorf("Expected %v, got %v", tc.expectedAuthInfoAuthProviderConfig, authInfo.AuthInfo.AuthProvider.Config)
+				if authInfo.AuthInfo.AuthProvider != nil {
+					t.Errorf("AuthProvider should be nil (use static token), got %v", authInfo.AuthInfo.AuthProvider)
 				}
 
 				// Validate context

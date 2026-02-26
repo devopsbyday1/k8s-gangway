@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gangway.configMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gangway.labels" . | nindent 4 }}
+data:
+  gangway.yaml: |
+    clusterName: {{ .Values.config.clusterName | quote }}
+    {{- if .Values.config.issuerURL }}
+    issuerURL: {{ .Values.config.issuerURL | quote }}
+    {{- end }}
+    authorizeURL: {{ .Values.config.authorizeURL | quote }}
+    tokenURL: {{ .Values.config.tokenURL | quote }}
+    clientID: {{ .Values.config.clientID | quote }}
+    redirectURL: {{ .Values.config.redirectURL | quote }}
+    apiServerURL: {{ .Values.config.apiServerURL | quote }}
+    clusterCAPath: {{ .Values.clusterCAPath | quote }}
+    scopes:
+    {{- range .Values.config.scopes }}
+      - {{ . | quote }}
+    {{- end }}
+    usernameClaim: {{ .Values.config.usernameClaim | quote }}
+    {{- if .Values.tls.enabled }}
+    serveTLS: true
+    certFile: {{ .Values.tls.certFile | quote }}
+    keyFile: {{ .Values.tls.keyFile | quote }}
+    {{- end }}

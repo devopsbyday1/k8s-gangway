@@ -1,15 +1,14 @@
-FROM golang:1.14.2-stretch
-WORKDIR /go/src/github.com/heptiolabs/gangway
-
-RUN go get -u github.com/mjibson/esc/...
+# Builder stage
+FROM golang:1.23-alpine AS builder
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
 COPY . .
-RUN esc -o cmd/gangway/bindata.go templates/
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o gangway ./cmd/gangway/
 
-ENV GO111MODULE on
-RUN go mod verify
-RUN CGO_ENABLED=0 GOOS=linux go install -ldflags="-w -s" -v github.com/heptiolabs/gangway/...
-
-FROM debian:9.12-slim
-RUN apt-get update && apt-get install -y ca-certificates
+# Runtime stage
+FROM debian:12-slim
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 USER 1001:1001
-COPY --from=0 /go/bin/gangway /bin/gangway
+COPY --from=builder /build/gangway /bin/gangway
+ENTRYPOINT ["/bin/gangway"]

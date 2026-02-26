@@ -1,12 +1,13 @@
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: steve-admin
+  name: gangway-admin
 subjects:
 - kind: User
-  name: steves@heptio.com
+  # Replace with the OIDC username of the cluster administrator
+  name: admin@example.com
   apiGroup: rbac.authorization.k8s.io
 roleRef:
-  kind: ClusterRole #this must be Role or ClusterRole
-  name: cluster-admin # this must match the name of the Role or ClusterRole you wish to bind to
+  kind: ClusterRole
+  name: cluster-admin
   apiGroup: rbac.authorization.k8s.io

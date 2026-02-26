@@ -16,7 +16,7 @@ package config
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"strings"
 
 	"github.com/kelseyhightower/envconfig"
@@ -29,6 +29,7 @@ type Config struct {
 	Port int    `yaml:"port"`
 
 	ClusterName            string   `yaml:"clusterName" envconfig:"cluster_name"`
+	IssuerURL              string   `yaml:"issuerURL" envconfig:"issuer_url"`
 	AuthorizeURL           string   `yaml:"authorizeURL" envconfig:"authorize_url"`
 	TokenURL               string   `yaml:"tokenURL" envconfig:"token_url"`
 	ClientID               string   `yaml:"clientID" envconfig:"client_id"`
@@ -69,7 +70,7 @@ func NewConfig(configFile string) (*Config, error) {
 	}
 
 	if configFile != "" {
-		data, err := ioutil.ReadFile(configFile)
+		data, err := os.ReadFile(configFile)
 		if err != nil {
 			return nil, err
 		}

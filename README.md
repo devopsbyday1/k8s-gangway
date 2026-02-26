@@ -1,79 +1,183 @@
+# k8s-gangway
 
-gangway
-[![Build Status](https://travis-ci.org/heptiolabs/gangway.svg?branch=master)](https://travis-ci.org/heptiolabs/gangway)
-=======
+[![CI](https://github.com/devopsbyday1/k8s-gangway/actions/workflows/ci.yml/badge.svg)](https://github.com/devopsbyday1/k8s-gangway/actions/workflows/ci.yml)
 
-# VMware has ended active development of this project, this repository will no longer be updated.
+> _(noun): An opening in the bulwark of the ship to allow passengers to board or leave the ship._
 
-_(noun): An opening in the bulwark of the ship to allow passengers to board or leave the ship._
+A modernized fork of [vmware-archive/gangway](https://github.com/vmware-archive/gangway) — a web application that enables OIDC authentication flows for Kubernetes cluster access. The upstream project was archived in 2020; this fork brings it up to date with current Go, security, and Kubernetes standards.
 
-An application that can be used to easily enable authentication flows via OIDC for a kubernetes cluster.
-Kubernetes supports [OpenID Connect Tokens](https://kubernetes.io/docs/reference/access-authn-authz/authentication/#openid-connect-tokens) as a way to identify users who access the cluster.
-Gangway allows users to self-configure their `kubectl` configuration in a few short steps.
+**What it does:** Gangway lets users self-configure their `kubectl` credentials in a few clicks by walking them through an OIDC browser flow and presenting ready-to-run `kubectl` commands.
 
 ![gangway screenshot](docs/images/screenshot.png)
 
-## Deployment
+## Changes from upstream
 
-Instructions for deploying gangway for common cloud providers can be found [here](docs/README.md).
+- Go 1.23, module path `github.com/devopsbyday1/k8s-gangway`
+- `dgrijalva/jwt-go` (abandoned, CVE-affected) replaced with `coreos/go-oidc/v3` — full JWKS-based token verification
+- All dependencies updated (oauth2, crypto, client-go, gorilla, etc.)
+- `ioutil` replaced with `os`/`io` throughout
+- Template embedding via native `//go:embed` (replaces `esc` codegen tool)
+- Dockerfile: `golang:1.23-alpine` + `debian:12-slim` (was Stretch + Debian 9 EOL)
+- Kubeconfig now uses static `token:` field instead of deprecated `auth-provider: oidc` (removed in kubectl 1.30)
+- `commandline` page shows kubelogin exec plugin and static token options
+- Ingress manifest updated to `networking.k8s.io/v1` with `pathType: Prefix`
+- cert-manager annotation updated to `cert-manager.io/cluster-issuer`
+- Travis CI replaced with GitHub Actions (CI + multi-arch release to ghcr.io)
+- Helm chart added (`helm/gangway/`)
+- Image: `ghcr.io/devopsbyday1/k8s-gangway`
 
 ## How It Works
 
-Kubernetes supports OpenID Connect (OIDC) as a user authentication mechanism. OIDC is an
-authentication protocol that allows servers to verify the identity of a user by way of an ID Token.
+Kubernetes supports [OpenID Connect Tokens](https://kubernetes.io/docs/reference/access-authn-authz/authentication/#openid-connect-tokens) as a user authentication mechanism. Gangway acts as an OIDC client that:
 
-When using OIDC to authenticate with Kubernetes, the client (e.g. `kubectl`) sends the ID token
-alongside all requests to the API server. On the server side, the Kubernetes API server verifies the
-token to ensure it is valid and has not expired. Once verified, the API server extracts username and
-group membership information from the token, and continues processing the request.
+1. Redirects the user to the upstream Identity Provider (IdP)
+2. Receives the authorization code callback
+3. Exchanges the code for an ID token (stored in an encrypted session cookie)
+4. Presents the user with `kubectl` commands and a downloadable kubeconfig
 
-In order to obtain the ID token, the user must go through the OIDC authentication process. This is
-where Gangway comes in. Gangway is a web application that enables the OIDC authentication flow which
-results in the minting of the ID Token.
-
-Gangway is configured as a client of an upstream Identity Service that speaks OIDC. To obtain the ID
-token, the user accesses Gangway, initiates the OIDC flow by clicking the "Log In" button, and
-completes the flow by authenticating with the upstream Identity Service. The user's credentials are
-never shared with Gangway.
-
-Once the authentication flow is complete, the user is redirected to a Gangway page that provides
-instructions on how to configure `kubectl` to use the ID token.
-
-The following sequence diagram details the authentication flow:
+The user's credentials are never shared with Gangway; it only handles the OAuth2 authorization code flow.
 
 <p align="center">
     <img src="docs/images/gangway-sequence-diagram.png" width="600px" />
 </p>
 
-## API-Server flags
+## Kubernetes API Server Configuration
 
-gangway requires that the Kubernetes API server is configured for OIDC:
-
-https://kubernetes.io/docs/admin/authentication/#configuring-the-api-server
+The API server must be configured for OIDC:
 
 ```bash
-kube-apiserver
-...
---oidc-issuer-url="https://example.auth0.com/"
---oidc-client-id=3YM4ue8MoXgBkvCIHh00000000000
---oidc-username-claim=email
---oidc-groups-claim=groups
+kube-apiserver \
+  --oidc-issuer-url="https://your-idp.example.com/" \
+  --oidc-client-id=<your-client-id> \
+  --oidc-username-claim=email \
+  --oidc-groups-claim=groups
+```
+
+See the [Kubernetes authentication docs](https://kubernetes.io/docs/reference/access-authn-authz/authentication/#configuring-the-api-server) for full details.
+
+## Configuration
+
+Gangway is configured via a YAML file (pass with `-config`) and/or environment variables prefixed with `GANGWAY_`.
+
+| Field | Env var | Required | Description |
+|-------|---------|----------|-------------|
+| `clusterName` | `GANGWAY_CLUSTER_NAME` | yes | Display name for the cluster |
+| `issuerURL` | `GANGWAY_ISSUER_URL` | recommended | OIDC issuer URL for token verification via JWKS discovery |
+| `authorizeURL` | `GANGWAY_AUTHORIZE_URL` | yes | OIDC authorization endpoint |
+| `tokenURL` | `GANGWAY_TOKEN_URL` | yes | OIDC token endpoint |
+| `clientID` | `GANGWAY_CLIENT_ID` | yes | OAuth2 client ID |
+| `clientSecret` | `GANGWAY_CLIENT_SECRET` | yes* | OAuth2 client secret |
+| `redirectURL` | `GANGWAY_REDIRECT_URL` | yes | Callback URL (must match IdP config) |
+| `apiServerURL` | `GANGWAY_APISERVER_URL` | yes | Kubernetes API server URL |
+| `sessionSecurityKey` | `GANGWAY_SESSION_SECURITY_KEY` | yes | Key used to encrypt session cookies |
+| `scopes` | `GANGWAY_SCOPES` | no | OAuth2 scopes (default: `openid profile email offline_access`) |
+| `usernameClaim` | `GANGWAY_USERNAME_CLAIM` | no | JWT claim to use as username (default: `nickname`) |
+| `clusterCAPath` | `GANGWAY_CLUSTER_CA_PATH` | no | Path to cluster CA cert |
+| `httpPath` | `GANGWAY_HTTP_PATH` | no | URL path prefix (e.g. `/gangway`) |
+| `serveTLS` | `GANGWAY_SERVE_TLS` | no | Serve TLS directly (default: false) |
+
+> **Note on `issuerURL`:** When set, gangway performs full OIDC token verification (signature, issuer, audience, expiry) using the provider's JWKS endpoint. Without it, token claims are parsed without signature verification — acceptable for closed environments but not recommended for production.
+
+Example config file:
+
+```yaml
+clusterName: my-cluster
+issuerURL: https://accounts.google.com
+authorizeURL: https://accounts.google.com/o/oauth2/auth
+tokenURL: https://oauth2.googleapis.com/token
+clientID: my-client-id
+redirectURL: https://gangway.example.com/callback
+apiServerURL: https://k8s-api.example.com
+scopes:
+  - openid
+  - profile
+  - email
+  - offline_access
+usernameClaim: email
+```
+
+## Deployment
+
+### Helm (recommended)
+
+```bash
+helm install gangway helm/gangway/ \
+  --namespace gangway --create-namespace \
+  --set config.clusterName=my-cluster \
+  --set config.issuerURL=https://your-idp.example.com \
+  --set config.authorizeURL=https://your-idp.example.com/authorize \
+  --set config.tokenURL=https://your-idp.example.com/token \
+  --set config.clientID=my-client-id \
+  --set config.clientSecret=my-client-secret \
+  --set config.redirectURL=https://gangway.example.com/callback \
+  --set config.apiServerURL=https://k8s-api.example.com \
+  --set config.sessionSecurityKey=$(openssl rand -base64 32) \
+  --set ingress.enabled=true \
+  --set ingress.host=gangway.example.com
+```
+
+For production, store secrets in an existing Kubernetes Secret and reference it:
+
+```bash
+kubectl -n gangway create secret generic gangway-secrets \
+  --from-literal=clientSecret=<secret> \
+  --from-literal=sessionSecurityKey=$(openssl rand -base64 32)
+
+helm install gangway helm/gangway/ \
+  --set existingSecret=gangway-secrets \
+  ...
+```
+
+### Raw manifests
+
+Reference manifests are in `docs/yaml/`. Apply in order:
+
+```bash
+# Replace ${GANGWAY_HOST} in 05-ingress.yaml first
+kubectl apply -f docs/yaml/01-namespace.yaml
+kubectl apply -f docs/yaml/02-config.yaml
+kubectl apply -f docs/yaml/03-deployment.yaml
+kubectl apply -f docs/yaml/04-service.yaml
+kubectl apply -f docs/yaml/05-ingress.yaml
+
+# Create session encryption key secret
+kubectl -n gangway create secret generic gangway-key \
+  --from-literal=sessionkey=$(openssl rand -base64 32)
 ```
 
 ## Build
 
-Requirements for building
-
-- Go (built with version >= 1.12)
-- [esc](https://github.com/mjibson/esc) for static resources.
-
-A Makefile is provided for building tasks. The options are as follows
-
-Getting started is as simple as:
+Requirements: Go 1.23+
 
 ```bash
-go get -u github.com/heptiolabs/gangway
-cd $GOPATH/src/github.com/heptiolabs/gangway
-make setup
-make
+git clone https://github.com/devopsbyday1/k8s-gangway
+cd k8s-gangway
+go build ./...
+go test ./...
 ```
+
+Build the container image:
+
+```bash
+docker build -t ghcr.io/devopsbyday1/k8s-gangway:latest .
+```
+
+## Docker Image
+
+```
+ghcr.io/devopsbyday1/k8s-gangway:<tag>
+```
+
+Images are published automatically on tag push via GitHub Actions (linux/amd64 and linux/arm64).
+
+## Identity Provider Configs
+
+See `docs/` for IdP-specific setup guides:
+
+- [Auth0](docs/auth0.md)
+- [Google](docs/google.md)
+- [Dex](docs/dex.md)
+
+## License
+
+Apache 2.0 — see [LICENSE](LICENSE).

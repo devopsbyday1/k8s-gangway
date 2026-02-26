@@ -25,9 +25,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/heptiolabs/gangway/internal/config"
-	"github.com/heptiolabs/gangway/internal/oidc"
-	"github.com/heptiolabs/gangway/internal/session"
+	"github.com/devopsbyday1/k8s-gangway/internal/config"
+	"github.com/devopsbyday1/k8s-gangway/internal/oidc"
+	"github.com/devopsbyday1/k8s-gangway/internal/session"
 	"github.com/justinas/alice"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/oauth2"
@@ -36,6 +36,7 @@ import (
 var cfg *config.Config
 var oauth2Cfg *oauth2.Config
 var o2token oidc.OAuth2Token
+var idTokenVerifier oidc.Verifier
 var gangwayUserSession *session.Session
 var transportConfig *config.TransportConfig
 
@@ -71,6 +72,22 @@ func main() {
 
 	o2token = &oidc.Token{
 		OAuth2Cfg: oauth2Cfg,
+	}
+
+	// Initialise OIDC token verifier. When IssuerURL is configured, use the
+	// full go-oidc/v3 verifier which validates signature, issuer, audience and
+	// expiry via JWKS. Otherwise fall back to unsafe parsing (no sig check).
+	if cfg.IssuerURL != "" {
+		pv, err := oidc.NewProviderVerifier(context.Background(), cfg.IssuerURL, cfg.ClientID)
+		if err != nil {
+			log.Errorf("Could not initialise OIDC provider: %s", err)
+			os.Exit(1)
+		}
+		idTokenVerifier = pv
+		log.Infof("OIDC provider initialised from %s", cfg.IssuerURL)
+	} else {
+		idTokenVerifier = &oidc.UnsafeVerifier{}
+		log.Warn("issuerURL not configured — using unsafe JWT parsing without signature verification. Set issuerURL for production use.")
 	}
 
 	transportConfig = config.NewTransportConfig(cfg.TrustedCAPath)
