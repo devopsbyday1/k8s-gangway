@@ -150,5 +150,7 @@ func main() {
 
 	log.Println("Shutdown signal received, exiting.")
 	// close the HTTP server
-	httpServer.Shutdown(context.Background())
+	if err := httpServer.Shutdown(context.Background()); err != nil {
+		log.Errorf("Error during server shutdown: %v", err)
+	}
 }

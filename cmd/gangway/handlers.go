@@ -79,7 +79,9 @@ func serveTemplate(tmplFile string, data interface{}, w http.ResponseWriter) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	tmpl.ExecuteTemplate(w, tmplFile, data)
+	if err := tmpl.ExecuteTemplate(w, tmplFile, data); err != nil {
+		log.Errorf("Failed to execute template %s: %v", tmplFile, err)
+	}
 }
 
 func generateKubeConfig(cfg *userInfo) clientcmdapi.Config {
@@ -146,7 +148,9 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 func loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	b := make([]byte, 32)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		log.Fatalf("Failed to generate random state: %v", err)
+	}
 	state := url.QueryEscape(base64.StdEncoding.EncodeToString(b))
 
 	session, err := gangwayUserSession.Session.Get(r, "gangway")
@@ -265,7 +269,9 @@ func kubeConfigHandler(w http.ResponseWriter, r *http.Request) {
 
 	// tell the browser the returned content should be downloaded
 	w.Header().Add("Content-Disposition", "Attachment")
-	w.Write(d)
+	if _, err := w.Write(d); err != nil {
+		log.Errorf("Error writing kubeconfig response: %v", err)
+	}
 }
 
 func generateInfo(w http.ResponseWriter, r *http.Request) *userInfo {

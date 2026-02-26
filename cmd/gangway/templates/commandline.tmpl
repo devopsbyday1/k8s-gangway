@@ -86,12 +86,25 @@ $ sudo mv ./kubectl /usr/local/bin/kubectl
                 <div class="col s12 right-align"><a href="{{ .HTTPPath }}/kubeconf" class="btn-large waves-effect waves-light blue">Download Kubeconfig</a></div>
                 <div class="col s12">Once kubectl is installed, you may execute the following:</div>
             </div>
-            <h6>Option 1 &mdash; kubelogin exec plugin (recommended, kubectl 1.26+)</h6>
-            <p>Install <a href="https://github.com/int128/kubelogin">kubelogin</a> first: <code>kubectl krew install oidc-login</code></p>
+            <h6>Option 1 &mdash; static token (simple, no extra tools required)</h6>
             <pre>
                <code class="language-bash">
 echo "{{ .ClusterCA }}" \ > "ca-{{ .ClusterName }}.pem"
 kubectl config set-cluster "{{ .ClusterName }}" --server={{ .APIServerURL }} --certificate-authority="ca-{{ .ClusterName }}.pem" --embed-certs
+kubectl config unset users."{{ .KubeCfgUser }}" 2>/dev/null; \
+kubectl config set-credentials "{{ .KubeCfgUser }}" --token="{{ .IDToken }}"
+kubectl config set-context "{{ .ClusterName }}" --cluster="{{ .ClusterName }}" --user="{{ .KubeCfgUser }}"
+kubectl config use-context "{{ .ClusterName }}"
+rm "ca-{{ .ClusterName }}.pem"
+              </code>
+            </pre>
+            <h6>Option 2 &mdash; kubelogin exec plugin (auto-refresh, kubectl 1.26+ + <a href="https://github.com/int128/kubelogin">kubelogin</a> required)</h6>
+            <p>Install kubelogin first: <code>kubectl krew install oidc-login</code></p>
+            <pre>
+               <code class="language-bash">
+echo "{{ .ClusterCA }}" \ > "ca-{{ .ClusterName }}.pem"
+kubectl config set-cluster "{{ .ClusterName }}" --server={{ .APIServerURL }} --certificate-authority="ca-{{ .ClusterName }}.pem" --embed-certs
+kubectl config unset users."{{ .KubeCfgUser }}" 2>/dev/null; \
 kubectl config set-credentials "{{ .KubeCfgUser }}" \
     --exec-api-version=client.authentication.k8s.io/v1 \
     --exec-command=kubectl \
@@ -99,18 +112,8 @@ kubectl config set-credentials "{{ .KubeCfgUser }}" \
     --exec-arg=get-token \
     --exec-arg=--oidc-issuer-url={{ .IssuerURL }} \
     --exec-arg=--oidc-client-id={{ .ClientID }} \
-    --exec-arg=--oidc-client-secret={{ .ClientSecret }}
-kubectl config set-context "{{ .ClusterName }}" --cluster="{{ .ClusterName }}" --user="{{ .KubeCfgUser }}"
-kubectl config use-context "{{ .ClusterName }}"
-rm "ca-{{ .ClusterName }}.pem"
-              </code>
-            </pre>
-            <h6>Option 2 &mdash; static token (simple, token expires at session end)</h6>
-            <pre>
-               <code class="language-bash">
-echo "{{ .ClusterCA }}" \ > "ca-{{ .ClusterName }}.pem"
-kubectl config set-cluster "{{ .ClusterName }}" --server={{ .APIServerURL }} --certificate-authority="ca-{{ .ClusterName }}.pem" --embed-certs
-kubectl config set-credentials "{{ .KubeCfgUser }}" --token="{{ .IDToken }}"
+    --exec-arg=--oidc-client-secret={{ .ClientSecret }} \
+    --exec-interactive-mode=Never
 kubectl config set-context "{{ .ClusterName }}" --cluster="{{ .ClusterName }}" --user="{{ .KubeCfgUser }}"
 kubectl config use-context "{{ .ClusterName }}"
 rm "ca-{{ .ClusterName }}.pem"
