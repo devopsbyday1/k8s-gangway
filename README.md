@@ -18,8 +18,8 @@ A modernized fork of [vmware-archive/gangway](https://github.com/vmware-archive/
 - `ioutil` replaced with `os`/`io` throughout
 - Template embedding via native `//go:embed` (replaces `esc` codegen tool)
 - Dockerfile: `golang:1.23-alpine` + `debian:12-slim` (was Stretch + Debian 9 EOL)
-- Kubeconfig now uses static `token:` field instead of deprecated `auth-provider: oidc` (removed in kubectl 1.30)
-- `commandline` page shows kubelogin exec plugin and static token options
+- Generated kubeconfig uses an exec credential helper script (replaces deprecated `auth-provider: oidc`, removed in kubectl 1.30) — auto-refreshes via refresh_token with no extra tools
+- `commandline` page: Option 1 downloads a self-contained helper script (set-and-forget); Option 2 is a static token fallback
 - Ingress manifest updated to `networking.k8s.io/v1` with `pathType: Prefix`
 - cert-manager annotation updated to `cert-manager.io/cluster-issuer`
 - Travis CI replaced with GitHub Actions (CI + multi-arch release to ghcr.io)
@@ -40,6 +40,48 @@ The user's credentials are never shared with Gangway; it only handles the OAuth2
 <p align="center">
     <img src="docs/images/gangway-sequence-diagram.png" width="600px" />
 </p>
+
+## kubectl Credential Setup
+
+After authenticating through gangway, the commandline page presents two options for configuring `kubectl`.
+
+### Option 1 — Set and forget (recommended)
+
+The commandline page serves a self-contained shell script from the `/helper.sh` endpoint. Once downloaded, it handles token refresh automatically with no extra tools.
+
+1. Download the helper script (it embeds your current tokens):
+
+   ```bash
+   curl -sf "https://gangway.example.com/helper.sh" -o ~/.kube/gangway-<cluster>.sh && chmod 700 ~/.kube/gangway-<cluster>.sh
+   ```
+
+2. Configure kubectl to use it:
+
+   ```bash
+   kubectl config set-credentials "<username>@<cluster>" \
+       --exec-api-version=client.authentication.k8s.io/v1 \
+       --exec-command=/bin/sh \
+       --exec-arg=-c \
+       --exec-arg="exec $HOME/.kube/gangway-<cluster>.sh" \
+       --exec-interactive-mode=Never
+   ```
+
+   The commandline page shows the exact commands with all values filled in.
+
+How it works:
+
+- The script stores tokens in `~/.kube/.gangway-<cluster>-tokens.json`
+- On each `kubectl` call it checks the id-token expiry from the JWT
+- If still valid, returns the cached token immediately
+- If expired, calls the OIDC token endpoint with the refresh_token, stores the new tokens, and returns the new id-token
+- Requires only `curl` and `base64` — universally available on Linux/macOS, no additional installs needed
+- When the IdP SSO session eventually expires (typically weeks/months), the script prints a message asking the user to re-authenticate via gangway
+
+### Option 2 — Static token
+
+The commandline page also shows a simple `--token=<id-token>` option. This works immediately but the token expires at the IdP's configured TTL (typically 1 hour), after which `kubectl` returns `Unauthorized` until the user re-authenticates via gangway.
+
+Use this option only when Option 1 is not available (e.g. no shell on the client machine).
 
 ## Kubernetes API Server Configuration
 
