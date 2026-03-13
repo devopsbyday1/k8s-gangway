@@ -17,10 +17,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	htmltemplate "html/template"
 	"io"
@@ -28,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	texttemplate "text/template"
 
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/oauth2"
@@ -37,36 +35,19 @@ import (
 
 // userInfo stores information about an authenticated user
 type userInfo struct {
-	ClusterName      string
-	Username         string
-	Claims           map[string]interface{}
-	KubeCfgUser      string
-	IDToken          string
-	RefreshToken     string
-	ClientID         string
-	ClientSecret     string
-	IssuerURL        string
-	APIServerURL     string
-	ClusterCA        string
-	HTTPPath         string
-	KubeloginCacheKey string
-}
-
-// computeKubeloginCacheKey computes the kubelogin token cache filename using
-// the same algorithm as kubelogin (SHA256 of JSON-marshaled provider config).
-func computeKubeloginCacheKey(issuerURL, clientID, clientSecret string) string {
-	type jsonKey struct {
-		IssuerURL    string `json:"issuerURL"`
-		ClientID     string `json:"clientID"`
-		ClientSecret string `json:"clientSecret,omitempty"`
-	}
-	b, _ := json.Marshal(jsonKey{
-		IssuerURL:    issuerURL,
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-	})
-	h := sha256.Sum256(b)
-	return hex.EncodeToString(h[:]) + ".json"
+	ClusterName  string
+	Username     string
+	Claims       map[string]interface{}
+	KubeCfgUser  string
+	IDToken      string
+	RefreshToken string
+	ClientID     string
+	ClientSecret string
+	TokenURL     string
+	IssuerURL    string
+	APIServerURL string
+	ClusterCA    string
+	HTTPPath     string
 }
 
 // homeInfo is used to store dynamic properties on
@@ -106,7 +87,10 @@ func serveTemplate(tmplFile string, data interface{}, w http.ResponseWriter) {
 }
 
 func generateKubeConfig(cfg *userInfo) clientcmdapi.Config {
-	// fill out kubeconfig structure using kubelogin exec format for auto-refresh
+	// Exec credential plugin: calls the gangway-generated helper script via sh.
+	// The script stores the refresh_token and silently renews the id_token on
+	// expiry — replicating the old auth-provider: oidc set-and-forget behaviour.
+	// Only requires curl + base64 (no extra tools to install).
 	kcfg := clientcmdapi.Config{
 		Kind:           "Config",
 		APIVersion:     "v1",
@@ -134,15 +118,9 @@ func generateKubeConfig(cfg *userInfo) clientcmdapi.Config {
 				Name: cfg.KubeCfgUser,
 				AuthInfo: clientcmdapi.AuthInfo{
 					Exec: &clientcmdapi.ExecConfig{
-						APIVersion: "client.authentication.k8s.io/v1",
-						Command:    "kubectl",
-						Args: []string{
-							"oidc-login",
-							"get-token",
-							fmt.Sprintf("--oidc-issuer-url=%s", cfg.IssuerURL),
-							fmt.Sprintf("--oidc-client-id=%s", cfg.ClientID),
-							fmt.Sprintf("--oidc-client-secret=%s", cfg.ClientSecret),
-						},
+						APIVersion:      "client.authentication.k8s.io/v1",
+						Command:         "/bin/sh",
+						Args:            []string{"-c", fmt.Sprintf("exec $HOME/.kube/gangway-%s.sh", cfg.ClusterName)},
 						InteractiveMode: clientcmdapi.NeverExecInteractiveMode,
 					},
 				},
@@ -150,6 +128,41 @@ func generateKubeConfig(cfg *userInfo) clientcmdapi.Config {
 		},
 	}
 	return kcfg
+}
+
+// serveScriptTemplate renders a text/template (no HTML escaping) as a
+// downloadable file. Used for the generated shell script helper.
+func serveScriptTemplate(tmplFile string, data interface{}, filename string, w http.ResponseWriter) {
+	templateData, err := templateFS.ReadFile("templates/" + tmplFile)
+	if err != nil {
+		log.Errorf("Failed to find template asset: %s", tmplFile)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	tmpl, err := texttemplate.New(tmplFile).Parse(string(templateData))
+	if err != nil {
+		log.Errorf("Failed to parse script template: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-sh")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	if err := tmpl.ExecuteTemplate(w, tmplFile, data); err != nil {
+		log.Errorf("Failed to execute script template %s: %v", tmplFile, err)
+	}
+}
+
+// helperScriptHandler serves the per-user token helper shell script.
+// The script embeds the user's current tokens and handles silent refresh.
+func helperScriptHandler(w http.ResponseWriter, r *http.Request) {
+	info := generateInfo(w, r)
+	if info == nil {
+		return
+	}
+	filename := fmt.Sprintf("gangway-%s.sh", info.ClusterName)
+	serveScriptTemplate("helper.sh.tmpl", info, filename, w)
 }
 
 func loginRequired(next http.Handler) http.Handler {
@@ -386,19 +399,19 @@ func generateInfo(w http.ResponseWriter, r *http.Request) *userInfo {
 	}
 
 	info := &userInfo{
-		ClusterName:       cfg.ClusterName,
-		Username:          username,
-		Claims:            claims,
-		KubeCfgUser:       kubeCfgUser,
-		IDToken:           idTokenStr,
-		RefreshToken:      refreshToken,
-		ClientID:          cfg.ClientID,
-		ClientSecret:      cfg.ClientSecret,
-		IssuerURL:         issuerURL,
-		APIServerURL:      cfg.APIServerURL,
-		ClusterCA:         string(caBytes),
-		HTTPPath:          cfg.HTTPPath,
-		KubeloginCacheKey: computeKubeloginCacheKey(issuerURL, cfg.ClientID, cfg.ClientSecret),
+		ClusterName:  cfg.ClusterName,
+		Username:     username,
+		Claims:       claims,
+		KubeCfgUser:  kubeCfgUser,
+		IDToken:      idTokenStr,
+		RefreshToken: refreshToken,
+		ClientID:     cfg.ClientID,
+		ClientSecret: cfg.ClientSecret,
+		TokenURL:     cfg.TokenURL,
+		IssuerURL:    issuerURL,
+		APIServerURL: cfg.APIServerURL,
+		ClusterCA:    string(caBytes),
+		HTTPPath:     cfg.HTTPPath,
 	}
 	return info
 }

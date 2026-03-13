@@ -1,0 +1,62 @@
+#!/bin/sh
+# Gangway token helper for cluster: {{ .ClusterName }}
+# Auto-generated — re-run the setup commands in gangway to update tokens.
+# Requires: curl, base64 (standard on Linux/macOS).
+
+TOKENS_FILE="${HOME}/.kube/.gangway-{{ .ClusterName }}-tokens.json"
+TOKEN_URL='{{ .TokenURL }}'
+CLIENT_ID='{{ .ClientID }}'
+CLIENT_SECRET='{{ .ClientSecret }}'
+
+# Bootstrap: write initial tokens on first run
+[ -f "${TOKENS_FILE}" ] || \
+    printf '{"id_token":"%s","refresh_token":"%s"}' \
+        '{{ .IDToken }}' '{{ .RefreshToken }}' > "${TOKENS_FILE}"
+
+# Read the stored id_token
+ID_TOKEN=$(sed 's/.*"id_token":"\([^"]*\)".*/\1/' "${TOKENS_FILE}")
+
+# Decode JWT exp claim from the payload (section 2, base64url → base64)
+JWT_B64=$(printf '%s' "${ID_TOKEN}" | cut -d. -f2 | tr -- '-_' '+/')
+PAD=$(( (4 - ${#JWT_B64} % 4) % 4 ))
+EXP=$(printf "%s%.*s" "${JWT_B64}" "${PAD}" "====" \
+    | base64 -d 2>/dev/null \
+    | grep -o '"exp":[0-9]*' \
+    | cut -d: -f2)
+NOW=$(date +%s)
+
+# Return the current token if it is still valid (30s buffer)
+if [ -n "${EXP}" ] && [ "$(( EXP - NOW ))" -gt 30 ]; then
+    printf '{"apiVersion":"client.authentication.k8s.io/v1","kind":"ExecCredential","status":{"token":"%s"}}\n' \
+        "${ID_TOKEN}"
+    exit 0
+fi
+
+# Token expired — exchange the refresh_token for a new one
+REFRESH_TOKEN=$(sed 's/.*"refresh_token":"\([^"]*\)".*/\1/' "${TOKENS_FILE}")
+
+RESPONSE=$(curl -sf \
+    --data-urlencode "grant_type=refresh_token" \
+    --data-urlencode "client_id=${CLIENT_ID}" \
+    --data-urlencode "client_secret=${CLIENT_SECRET}" \
+    --data-urlencode "refresh_token=${REFRESH_TOKEN}" \
+    "${TOKEN_URL}")
+
+if [ $? -ne 0 ] || [ -z "${RESPONSE}" ]; then
+    printf 'gangway: token refresh failed — please re-authenticate via gangway\n' >&2
+    exit 1
+fi
+
+NEW_ID_TOKEN=$(printf '%s' "${RESPONSE}" | grep -o '"id_token":"[^"]*"' | cut -d'"' -f4)
+NEW_REFRESH_TOKEN=$(printf '%s' "${RESPONSE}" | grep -o '"refresh_token":"[^"]*"' | cut -d'"' -f4)
+
+if [ -z "${NEW_ID_TOKEN}" ]; then
+    printf 'gangway: could not parse id_token from refresh response\n' >&2
+    exit 1
+fi
+
+printf '{"id_token":"%s","refresh_token":"%s"}' \
+    "${NEW_ID_TOKEN}" "${NEW_REFRESH_TOKEN}" > "${TOKENS_FILE}"
+
+printf '{"apiVersion":"client.authentication.k8s.io/v1","kind":"ExecCredential","status":{"token":"%s"}}\n' \
+    "${NEW_ID_TOKEN}"

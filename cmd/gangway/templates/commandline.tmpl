@@ -86,31 +86,27 @@ $ sudo mv ./kubectl /usr/local/bin/kubectl
                 <div class="col s12 right-align"><a href="{{ .HTTPPath }}/kubeconf" class="btn-large waves-effect waves-light blue">Download Kubeconfig</a></div>
                 <div class="col s12">Once kubectl is installed, you may execute the following:</div>
             </div>
-            <h6>Option 1 &mdash; kubelogin exec plugin (primary, set and forget auto-refresh)</h6>
-            <p>Install kubelogin first: <code>kubectl krew install oidc-login</code></p>
+            <h6>Option 1 &mdash; set and forget (auto-refresh, no extra tools required)</h6>
+            <p>Requires only <code>curl</code> and <code>base64</code> — standard on all Linux/macOS machines. Token renews silently on expiry, just like the old OIDC auth-provider.</p>
             <pre>
                <code class="language-bash">
 echo "{{ .ClusterCA }}" \ > "ca-{{ .ClusterName }}.pem"
 kubectl config set-cluster "{{ .ClusterName }}" --server={{ .APIServerURL }} --certificate-authority="ca-{{ .ClusterName }}.pem" --embed-certs
+curl -sf "{{ .HTTPPath }}/helper.sh" -o ~/.kube/gangway-{{ .ClusterName }}.sh && chmod 700 ~/.kube/gangway-{{ .ClusterName }}.sh
 kubectl config unset users."{{ .KubeCfgUser }}" 2>/dev/null; \
 kubectl config set-credentials "{{ .KubeCfgUser }}" \
     --exec-api-version=client.authentication.k8s.io/v1 \
-    --exec-command=kubectl \
-    --exec-arg=oidc-login \
-    --exec-arg=get-token \
-    --exec-arg=--oidc-issuer-url={{ .IssuerURL }} \
-    --exec-arg=--oidc-client-id={{ .ClientID }} \
-    --exec-arg=--oidc-client-secret={{ .ClientSecret }} \
+    --exec-command=/bin/sh \
+    --exec-arg=-c \
+    --exec-arg="exec $HOME/.kube/gangway-{{ .ClusterName }}.sh" \
     --exec-interactive-mode=Never
 kubectl config set-context "{{ .ClusterName }}" --cluster="{{ .ClusterName }}" --user="{{ .KubeCfgUser }}"
 kubectl config use-context "{{ .ClusterName }}"
-mkdir -p ~/.kube/cache/oidc-login
-printf '{"id_token":"%s","refresh_token":"%s"}' "{{ .IDToken }}" "{{ .RefreshToken }}" > ~/.kube/cache/oidc-login/{{ .KubeloginCacheKey }}
 rm "ca-{{ .ClusterName }}.pem"
               </code>
             </pre>
-            <h6>Option 2 &mdash; static token (fallback, expires in ~1 hour)</h6>
-            <p><strong>Warning:</strong> This token will expire and require re-authentication. Only use if kubelogin is not available.</p>
+            <h6>Option 2 &mdash; static token (simple, expires in ~1 hour)</h6>
+            <p><strong>Note:</strong> Token expires and will require re-authentication. Use only if Option 1 is not available.</p>
             <pre>
                <code class="language-bash">
 echo "{{ .ClusterCA }}" \ > "ca-{{ .ClusterName }}.pem"

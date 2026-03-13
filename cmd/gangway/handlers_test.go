@@ -391,21 +391,21 @@ func TestKubeconfigHandler(t *testing.T) {
 					t.Errorf("Expected AuthInfo.Name %q, but got %q", tc.expectedAuthInfoName, authInfo.Name)
 				}
 
-				// Verify exec format for kubelogin
+				// Verify exec format points to the gangway helper script via /bin/sh
 				if authInfo.AuthInfo.Exec == nil {
-					t.Errorf("Expected Exec field to be set for kubelogin, but it was nil")
+					t.Errorf("Expected Exec field to be set, but it was nil")
 				} else {
-					if authInfo.AuthInfo.Exec.Command != "kubectl" {
-						t.Errorf("Expected exec command to be kubectl, got %q", authInfo.AuthInfo.Exec.Command)
+					if authInfo.AuthInfo.Exec.Command != "/bin/sh" {
+						t.Errorf("Expected exec command to be /bin/sh, got %q", authInfo.AuthInfo.Exec.Command)
 					}
 					if len(authInfo.AuthInfo.Exec.Args) < 2 {
 						t.Errorf("Expected at least 2 args, got %d", len(authInfo.AuthInfo.Exec.Args))
 					}
-					if authInfo.AuthInfo.Exec.Args[0] != "oidc-login" {
-						t.Errorf("Expected first arg to be oidc-login, got %q", authInfo.AuthInfo.Exec.Args[0])
+					if authInfo.AuthInfo.Exec.Args[0] != "-c" {
+						t.Errorf("Expected first arg to be -c, got %q", authInfo.AuthInfo.Exec.Args[0])
 					}
-					if authInfo.AuthInfo.Exec.Args[1] != "get-token" {
-						t.Errorf("Expected second arg to be get-token, got %q", authInfo.AuthInfo.Exec.Args[1])
+					if !strings.Contains(authInfo.AuthInfo.Exec.Args[1], "gangway-") {
+						t.Errorf("Expected second arg to reference gangway helper script, got %q", authInfo.AuthInfo.Exec.Args[1])
 					}
 				}
 				if authInfo.AuthInfo.Token != "" {
