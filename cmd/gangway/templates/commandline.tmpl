@@ -86,19 +86,7 @@ $ sudo mv ./kubectl /usr/local/bin/kubectl
                 <div class="col s12 right-align"><a href="{{ .HTTPPath }}/kubeconf" class="btn-large waves-effect waves-light blue">Download Kubeconfig</a></div>
                 <div class="col s12">Once kubectl is installed, you may execute the following:</div>
             </div>
-            <h6>Option 1 &mdash; static token (simple, no extra tools required)</h6>
-            <pre>
-               <code class="language-bash">
-echo "{{ .ClusterCA }}" \ > "ca-{{ .ClusterName }}.pem"
-kubectl config set-cluster "{{ .ClusterName }}" --server={{ .APIServerURL }} --certificate-authority="ca-{{ .ClusterName }}.pem" --embed-certs
-kubectl config unset users."{{ .KubeCfgUser }}" 2>/dev/null; \
-kubectl config set-credentials "{{ .KubeCfgUser }}" --token="{{ .IDToken }}"
-kubectl config set-context "{{ .ClusterName }}" --cluster="{{ .ClusterName }}" --user="{{ .KubeCfgUser }}"
-kubectl config use-context "{{ .ClusterName }}"
-rm "ca-{{ .ClusterName }}.pem"
-              </code>
-            </pre>
-            <h6>Option 2 &mdash; kubelogin exec plugin (auto-refresh, kubectl 1.26+ + <a href="https://github.com/int128/kubelogin">kubelogin</a> required)</h6>
+            <h6>Option 1 &mdash; kubelogin exec plugin (primary, set and forget auto-refresh)</h6>
             <p>Install kubelogin first: <code>kubectl krew install oidc-login</code></p>
             <pre>
                <code class="language-bash">
@@ -114,6 +102,21 @@ kubectl config set-credentials "{{ .KubeCfgUser }}" \
     --exec-arg=--oidc-client-id={{ .ClientID }} \
     --exec-arg=--oidc-client-secret={{ .ClientSecret }} \
     --exec-interactive-mode=Never
+kubectl config set-context "{{ .ClusterName }}" --cluster="{{ .ClusterName }}" --user="{{ .KubeCfgUser }}"
+kubectl config use-context "{{ .ClusterName }}"
+mkdir -p ~/.kube/cache/oidc-login
+printf '{"id_token":"%s","refresh_token":"%s"}' "{{ .IDToken }}" "{{ .RefreshToken }}" > ~/.kube/cache/oidc-login/{{ .KubeloginCacheKey }}
+rm "ca-{{ .ClusterName }}.pem"
+              </code>
+            </pre>
+            <h6>Option 2 &mdash; static token (fallback, expires in ~1 hour)</h6>
+            <p><strong>Warning:</strong> This token will expire and require re-authentication. Only use if kubelogin is not available.</p>
+            <pre>
+               <code class="language-bash">
+echo "{{ .ClusterCA }}" \ > "ca-{{ .ClusterName }}.pem"
+kubectl config set-cluster "{{ .ClusterName }}" --server={{ .APIServerURL }} --certificate-authority="ca-{{ .ClusterName }}.pem" --embed-certs
+kubectl config unset users."{{ .KubeCfgUser }}" 2>/dev/null; \
+kubectl config set-credentials "{{ .KubeCfgUser }}" --token="{{ .IDToken }}"
 kubectl config set-context "{{ .ClusterName }}" --cluster="{{ .ClusterName }}" --user="{{ .KubeCfgUser }}"
 kubectl config use-context "{{ .ClusterName }}"
 rm "ca-{{ .ClusterName }}.pem"

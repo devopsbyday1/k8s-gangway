@@ -17,7 +17,10 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	htmltemplate "html/template"
 	"io"
@@ -34,18 +37,36 @@ import (
 
 // userInfo stores information about an authenticated user
 type userInfo struct {
-	ClusterName  string
-	Username     string
-	Claims       map[string]interface{}
-	KubeCfgUser  string
-	IDToken      string
-	RefreshToken string
-	ClientID     string
-	ClientSecret string
-	IssuerURL    string
-	APIServerURL string
-	ClusterCA    string
-	HTTPPath     string
+	ClusterName      string
+	Username         string
+	Claims           map[string]interface{}
+	KubeCfgUser      string
+	IDToken          string
+	RefreshToken     string
+	ClientID         string
+	ClientSecret     string
+	IssuerURL        string
+	APIServerURL     string
+	ClusterCA        string
+	HTTPPath         string
+	KubeloginCacheKey string
+}
+
+// computeKubeloginCacheKey computes the kubelogin token cache filename using
+// the same algorithm as kubelogin (SHA256 of JSON-marshaled provider config).
+func computeKubeloginCacheKey(issuerURL, clientID, clientSecret string) string {
+	type jsonKey struct {
+		IssuerURL    string `json:"issuerURL"`
+		ClientID     string `json:"clientID"`
+		ClientSecret string `json:"clientSecret,omitempty"`
+	}
+	b, _ := json.Marshal(jsonKey{
+		IssuerURL:    issuerURL,
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+	})
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:]) + ".json"
 }
 
 // homeInfo is used to store dynamic properties on
@@ -85,7 +106,7 @@ func serveTemplate(tmplFile string, data interface{}, w http.ResponseWriter) {
 }
 
 func generateKubeConfig(cfg *userInfo) clientcmdapi.Config {
-	// fill out kubeconfig structure using static token (works with all kubectl versions)
+	// fill out kubeconfig structure using kubelogin exec format for auto-refresh
 	kcfg := clientcmdapi.Config{
 		Kind:           "Config",
 		APIVersion:     "v1",
@@ -112,7 +133,18 @@ func generateKubeConfig(cfg *userInfo) clientcmdapi.Config {
 			{
 				Name: cfg.KubeCfgUser,
 				AuthInfo: clientcmdapi.AuthInfo{
-					Token: cfg.IDToken,
+					Exec: &clientcmdapi.ExecConfig{
+						APIVersion: "client.authentication.k8s.io/v1",
+						Command:    "kubectl",
+						Args: []string{
+							"oidc-login",
+							"get-token",
+							fmt.Sprintf("--oidc-issuer-url=%s", cfg.IssuerURL),
+							fmt.Sprintf("--oidc-client-id=%s", cfg.ClientID),
+							fmt.Sprintf("--oidc-client-secret=%s", cfg.ClientSecret),
+						},
+						InteractiveMode: clientcmdapi.NeverExecInteractiveMode,
+					},
 				},
 			},
 		},
@@ -354,18 +386,19 @@ func generateInfo(w http.ResponseWriter, r *http.Request) *userInfo {
 	}
 
 	info := &userInfo{
-		ClusterName:  cfg.ClusterName,
-		Username:     username,
-		Claims:       claims,
-		KubeCfgUser:  kubeCfgUser,
-		IDToken:      idTokenStr,
-		RefreshToken: refreshToken,
-		ClientID:     cfg.ClientID,
-		ClientSecret: cfg.ClientSecret,
-		IssuerURL:    issuerURL,
-		APIServerURL: cfg.APIServerURL,
-		ClusterCA:    string(caBytes),
-		HTTPPath:     cfg.HTTPPath,
+		ClusterName:       cfg.ClusterName,
+		Username:          username,
+		Claims:            claims,
+		KubeCfgUser:       kubeCfgUser,
+		IDToken:           idTokenStr,
+		RefreshToken:      refreshToken,
+		ClientID:          cfg.ClientID,
+		ClientSecret:      cfg.ClientSecret,
+		IssuerURL:         issuerURL,
+		APIServerURL:      cfg.APIServerURL,
+		ClusterCA:         string(caBytes),
+		HTTPPath:          cfg.HTTPPath,
+		KubeloginCacheKey: computeKubeloginCacheKey(issuerURL, cfg.ClientID, cfg.ClientSecret),
 	}
 	return info
 }
